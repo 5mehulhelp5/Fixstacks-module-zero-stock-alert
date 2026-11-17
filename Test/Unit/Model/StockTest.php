@@ -12,6 +12,7 @@ use Magento\Catalog\Api\ProductRepositoryInterface;
 use Magento\Catalog\Model\Product;
 use Magento\Catalog\Model\ResourceModel\Product\Collection;
 use Magento\Catalog\Model\ResourceModel\Product\CollectionFactory;
+use Magento\Framework\Module\Manager as ModuleManager;
 use Magento\Framework\ObjectManagerInterface;
 use Magento\InventorySalesApi\Api\AreProductsSalableInterface;
 use Magento\InventorySalesApi\Api\Data\IsProductSalableResultInterface;
@@ -21,6 +22,7 @@ use Magento\Store\Model\Store;
 use Magento\Store\Model\StoreManagerInterface;
 use Magento\Store\Model\Website;
 use PHPUnit\Framework\TestCase;
+use Zero\Core\Model\Inventory\Msi;
 use Zero\StockAlert\Model\Stock;
 
 /**
@@ -70,6 +72,16 @@ class StockTest extends TestCase
 
         self::assertSame([11 => true, 12 => false, 13 => false], $result);
         self::assertSame([[11, false, 1, true], [12, false, 1, true]], $this->loaded, 'the disabled product 13 is not loaded');
+    }
+
+    public function testMsiPresentButDisabledFallsBackLikeMsiAbsent(): void
+    {
+        // Disabled modules: the ObjectManager would throw an Error for their interfaces. It must not be asked.
+        $this->withInventory = false;
+        $stock = $this->stock([11, 12]);
+
+        self::assertSame([11 => true, 12 => false], $stock->buyable([11 => 'A', 12 => 'B'], 1));
+        self::assertSame([], $this->salableAsked);
     }
 
     public function testNothingEnabledAsksNoStock(): void
@@ -138,11 +150,14 @@ class StockTest extends TestCase
         });
         $objectManager = $this->createStub(ObjectManagerInterface::class);
         $objectManager->method('get')->willReturnCallback(fn (string $type) => match (true) {
-            !$this->withInventory => throw new \ReflectionException("Class $type does not exist"),
+            !$this->withInventory => throw new \Error("Cannot instantiate interface $type"),
             ltrim($type, '\\') === StockResolverInterface::class => $resolver,
             ltrim($type, '\\') === AreProductsSalableInterface::class => $salable,
             default => throw new \LogicException($type),
         });
+
+        $modules = $this->createStub(ModuleManager::class);
+        $modules->method('isEnabled')->willReturnCallback(fn () => $this->withInventory);
 
         $products = $this->createStub(ProductRepositoryInterface::class);
         $products->method('getById')->willReturnCallback(function (...$args) {
@@ -153,6 +168,6 @@ class StockTest extends TestCase
             return $product;
         });
 
-        return new Stock($products, $stores, $factory, $objectManager);
+        return new Stock($products, $stores, $factory, new Msi($modules, $objectManager));
     }
 }

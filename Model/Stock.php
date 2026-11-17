@@ -13,7 +13,7 @@ use Magento\Catalog\Model\Product;
 use Magento\Store\Model\StoreManagerInterface;
 use Magento\Catalog\Model\ResourceModel\Product\CollectionFactory;
 use Magento\ConfigurableProduct\Model\Product\Type\Configurable;
-use Magento\Framework\ObjectManagerInterface;
+use Zero\Core\Model\Inventory\Msi;
 
 /**
  * What can be waited for on a product page: the product itself when it can't
@@ -26,7 +26,7 @@ class Stock
         private readonly ProductRepositoryInterface $productRepository,
         private readonly StoreManagerInterface $storeManager,
         private readonly CollectionFactory $collectionFactory,
-        private readonly ObjectManagerInterface $objectManager
+        private readonly Msi $msi
     ) {
     }
 
@@ -109,27 +109,21 @@ class Stock
     /**
      * Whether each SKU can be bought now in a website's stock (default: the
      * current website), in one call (reservations counted, as on the product
-     * page); null where the inventory modules' bulk API is not there.
+     * page); null where the inventory modules (MSI) are not enabled.
      *
      * @param string[] $skus
      * @return array<string, bool>|null
      */
     private function salable(array $skus, ?string $websiteCode = null): ?array
     {
-        $areSalable = '\\Magento\\InventorySalesApi\\Api\\AreProductsSalableInterface';
-        $resolver = '\\Magento\\InventorySalesApi\\Api\\StockResolverInterface';
-        if (!$skus || !interface_exists($areSalable) || !interface_exists($resolver)) {
+        if (!$skus) {
             return null;
         }
         try {
             $websiteCode ??= (string) $this->storeManager->getWebsite()->getCode();
-            $stockId = (int) $this->objectManager->get($resolver)->execute('website', $websiteCode)->getStockId();
-            $salable = [];
-            foreach ($this->objectManager->get($areSalable)->execute(array_values($skus), $stockId) as $result) {
-                $salable[(string) $result->getSku()] = (bool) $result->isSalable();
-            }
+            $stockId = $this->msi->stockId($websiteCode);
 
-            return $salable;
+            return $stockId === null ? null : $this->msi->areSalable($skus, $stockId);
         } catch (\Throwable) {
             return null;
         }
